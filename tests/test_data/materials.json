@@ -1,0 +1,47 @@
+[
+    {
+        "material_code": "P001",
+        "material_name": "卡箍",
+        "specification": "DN100",
+        "unit": "个",
+        "category": {
+            "level1": "管件类",
+            "level2": "卡箍"
+        },
+        "attributes": {
+            "material": "碳钢",
+            "size": "DN100",
+            "standard": "GB/T"
+        }
+    },
+    {
+        "material_code": "P002",
+        "material_name": "沟槽大小头",
+        "specification": "DN100*80",
+        "unit": "个",
+        "category": {
+            "level1": "管件类",
+            "level2": "异径管"
+        },
+        "attributes": {
+            "material": "碳钢",
+            "size": "DN100*80",
+            "standard": "GB/T"
+        }
+    },
+    {
+        "material_code": "P003",
+        "material_name": "沟槽弯头",
+        "specification": "DN80*65",
+        "unit": "个",
+        "category": {
+            "level1": "管件类",
+            "level2": "弯头"
+        },
+        "attributes": {
+            "material": "碳钢",
+            "size": "DN80*65",
+            "standard": "GB/T"
+        }
+    }
+] 
