@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class MaterialMatcher:
     def __init__(self):
+        """初始化物料匹配器"""
         self.db = Database.get_db()
         self.collection = self.db[COLLECTIONS["materials"]]
         self.min_confidence = 0.5
@@ -239,4 +240,4 @@ class MaterialMatcher:
         for pattern, replacement in patterns.items():
             spec = re.sub(pattern, replacement, spec)
 
-        return spec if spec else None       
+        return spec if spec else None         

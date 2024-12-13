@@ -1,9 +1,9 @@
 import pytest
 import asyncio
 import logging
-import motor.motor_asyncio
+from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
-from app.core.database import Database
+from app.core.database import Database, COLLECTIONS
 
 # Configure logging for tests
 logging.basicConfig(
@@ -11,7 +11,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-@pytest.fixture(scope="session", autouse=True)
+logger = logging.getLogger(__name__)
+
+@pytest.fixture(scope="session")
 def event_loop():
     """Create an instance of the default event loop for each test case."""
     policy = asyncio.get_event_loop_policy()
@@ -23,22 +25,22 @@ def event_loop():
 @pytest.fixture(scope="session")
 async def database():
     """创建数据库连接"""
-    client = None
     try:
-        client = motor.motor_asyncio.AsyncIOMotorClient(settings.MONGODB_URL)
-        db = client[settings.MONGODB_DB]
-        Database._db = db
-        yield db
+        await Database.init_db(settings.MONGODB_URL, settings.MONGODB_DB)
+        logger.info("Test database initialized")
+        yield Database.get_db()
     finally:
-        if client:
-            await client.close()
+        if Database._client:
+            await Database.close_db()
+            logger.info("Test database connection closed")
 
 @pytest.fixture(autouse=True)
 async def clean_collections(database):
     """清理测试集合"""
-    collections = ["materials", "ocr_tasks", "synonym_groups"]
-    for collection in collections:
-        await database[collection].delete_many({})
+    for collection_name in COLLECTIONS.values():
+        await database[collection_name].delete_many({})
+        logger.info(f"Cleaned collection: {collection_name}")
     yield
-    for collection in collections:
-        await database[collection].delete_many({})
+    for collection_name in COLLECTIONS.values():
+        await database[collection_name].delete_many({})
+        logger.info(f"Cleaned collection: {collection_name}")

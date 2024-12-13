@@ -3,7 +3,10 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from app.models.material import MaterialBase, MaterialMatch
 from app.services.matcher.matcher import MaterialMatcher
-from app.core.database import Database
+from app.core.database import Database, COLLECTIONS
+import logging
+
+logger = logging.getLogger(__name__)
 
 @pytest.fixture
 async def material_data():
@@ -28,62 +31,18 @@ async def material_data():
     ]
 
 @pytest.fixture
-async def mock_db(material_data):
+async def mock_db(database, material_data):
     """Mock数据库"""
-    class AsyncCursor:
-        def __init__(self, items):
-            self.items = items
-            self.index = 0
+    # Insert test data into materials collection
+    for item in material_data:
+        await database[COLLECTIONS["materials"]].insert_one(item)
+        logger.info(f"Inserted test material: {item['material_name']}")
 
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            if self.index >= len(self.items):
-                raise StopAsyncIteration
-            item = self.items[self.index]
-            self.index += 1
-            return item
-
-    async def mock_find_one(collection, query):
-        for item in material_data:
-            if all(
-                isinstance(v, dict) and "$regex" in v and re.search(v["$regex"], item[k], re.IGNORECASE)
-                if isinstance(v, dict) and "$regex" in v
-                else item.get(k) == v
-                for k, v in query.items()
-            ):
-                return item
-        return None
-
-    async def mock_find(collection, query=None):
-        if query is None:
-            query = {}
-        matched_items = []
-        for item in material_data:
-            if all(
-                isinstance(v, dict) and "$regex" in v and re.search(v["$regex"], item[k], re.IGNORECASE)
-                if isinstance(v, dict) and "$regex" in v
-                else item.get(k) == v
-                for k, v in query.items()
-            ):
-                matched_items.append(item)
-        return AsyncCursor(matched_items)
-
-    # Create mock collection
-    mock_collection = AsyncMock()
-    mock_collection.find_one.side_effect = mock_find_one
-    mock_collection.find.side_effect = mock_find
-
-    # Create mock db
-    mock_db = MagicMock()
-    mock_db.__getitem__.return_value = mock_collection
-    Database._db = mock_db
-
-    yield mock_db
+    yield database
 
     # Cleanup
-    Database._db = None
+    await database[COLLECTIONS["materials"]].delete_many({})
+    logger.info("Cleaned up test materials")
 
 @pytest.fixture
 async def matcher(mock_db):
