@@ -30,6 +30,7 @@ class Database:
 COLLECTIONS = {
     "materials": "materials",
     "synonyms": "synonyms",
+    "ocr_tasks": "ocr_tasks",
     "ocr_results": "ocr_results",
     "metrics": "performance_metrics"
 }
@@ -46,6 +47,11 @@ async def create_indexes():
     await db[COLLECTIONS["synonyms"]].create_index("group_id", unique=True)
     await db[COLLECTIONS["synonyms"]].create_index("standard_name")
     await db[COLLECTIONS["synonyms"]].create_index("material_code")
+    
+    # OCR任务集合索引
+    await db[COLLECTIONS["ocr_tasks"]].create_index("task_id", unique=True)
+    await db[COLLECTIONS["ocr_tasks"]].create_index("created_at")
+    await db[COLLECTIONS["ocr_tasks"]].create_index("status")
     
     # OCR结果集合索引
     await db[COLLECTIONS["ocr_results"]].create_index("created_at")
