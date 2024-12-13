@@ -2,12 +2,19 @@ import pytest
 from app.services.matcher.synonym_service import SynonymService
 from app.models.material import SynonymCreate, SynonymGroup
 from app.core.database import Database
+import logging
+
+logger = logging.getLogger(__name__)
 
 @pytest.fixture(autouse=True)
 async def setup_database():
     """设置数据库连接"""
-    yield
-    Database.close_connection()
+    try:
+        yield
+    finally:
+        if Database._client:
+            await Database.close_db()
+            logger.info("Closed test database connection")
 
 @pytest.mark.asyncio
 async def test_synonym_service_basic():

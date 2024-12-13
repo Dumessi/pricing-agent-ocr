@@ -96,53 +96,64 @@ class SynonymService:
         if not text.strip():  # 处理空字符串
             return None
 
-        # 1. 尝试精确匹配
-        query = {"status": True}
-        if category:
-            query["category"] = category
-
-        # 检查是否是标准名称
-        doc = await self.collection.find_one({
-            **query,
-            "standard_name": text
-        })
-        if doc:
-            return SynonymGroup(**doc)
-
-        # 检查是否在同义词列表中
-        doc = await self.collection.find_one({
-            **query,
-            "synonyms": text
-        })
-        if doc:
-            return SynonymGroup(**doc)
-
-        # 2. 尝试模糊匹配
-        best_match = None
-        highest_ratio = 0
-
         try:
+            # 1. 尝试精确匹配
+            query = {"status": True}
+            if category:
+                query["category"] = category
+
+            logger.debug(f"同义词查询条件: {query}")
+
+            # 检查是否是标准名称
+            doc = await self.collection.find_one({
+                **query,
+                "standard_name": text
+            })
+            if doc:
+                logger.info(f"找到标准名称精确匹配: {text}")
+                return SynonymGroup(**doc)
+
+            # 检查是否在同义词列表中
+            doc = await self.collection.find_one({
+                **query,
+                "synonyms": text
+            })
+            if doc:
+                logger.info(f"找到同义词精确匹配: {text}")
+                return SynonymGroup(**doc)
+
+            # 2. 尝试模糊匹配
+            best_match = None
+            highest_ratio = 0
+
             cursor = self.collection.find(query)
             async for doc in cursor:
                 # 检查标准名称
-                ratio = fuzz.ratio(text.lower(), doc["standard_name"].lower())
-                if ratio > highest_ratio and ratio >= self.min_confidence * 100:
-                    highest_ratio = ratio
+                standard_ratio = fuzz.token_set_ratio(text.lower(), doc["standard_name"].lower())
+                if standard_ratio > highest_ratio and standard_ratio >= self.min_confidence * 100:
+                    highest_ratio = standard_ratio
                     best_match = doc
-                    continue
+                    logger.debug(f"更新最佳匹配 - 标准名称: {doc['standard_name']}, 相似度: {standard_ratio}")
 
                 # 检查同义词列表
                 for synonym in doc["synonyms"]:
-                    ratio = fuzz.ratio(text.lower(), synonym.lower())
-                    if ratio > highest_ratio and ratio >= self.min_confidence * 100:
-                        highest_ratio = ratio
+                    synonym_ratio = fuzz.token_set_ratio(text.lower(), synonym.lower())
+                    if synonym_ratio > highest_ratio and synonym_ratio >= self.min_confidence * 100:
+                        highest_ratio = synonym_ratio
                         best_match = doc
+                        logger.debug(f"更新最佳匹配 - 同义词: {synonym}, 相似度: {synonym_ratio}")
                         break
-        except Exception as e:
-            logger.error(f"模糊匹配查询出错: {str(e)}")
+
+            if best_match:
+                logger.info(f"找到模糊匹配: {text} -> {best_match['standard_name']}, 相似度: {highest_ratio}")
+                return SynonymGroup(**best_match)
+
+            logger.info(f"未找到匹配: {text}")
             return None
 
-        return SynonymGroup(**best_match) if best_match else None
+        except Exception as e:
+            logger.error(f"同义词匹配出错: {str(e)}")
+            return None
 
     @monitor_performance("get_all_synonyms")
     async def get_all_synonyms(self, category: Optional[str] = None) -> List[SynonymGroup]:

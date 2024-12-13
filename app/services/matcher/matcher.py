@@ -102,6 +102,7 @@ class MaterialMatcher:
             if synonym_group:
                 doc = await self.collection.find_one({"material_code": synonym_group.material_code})
                 if doc:
+                    logger.info(f"找到同义词匹配: {text} -> {doc['material_name']}")
                     return MaterialBase(**doc)
         except Exception as e:
             logger.error(f"同义词匹配出错: {str(e)}")
@@ -132,21 +133,27 @@ class MaterialMatcher:
 
     async def _fuzzy_match(self, text: str) -> Optional[Dict]:
         """模糊匹配"""
-        best_match = None
-        highest_ratio = 0
+        try:
+            best_match = None
+            highest_ratio = 0
 
-        cursor = self.collection.find({})
-        async for doc in cursor:
-            ratio = fuzz.ratio(text.lower(), doc["material_name"].lower())
-            if ratio > highest_ratio and ratio >= 60:  # 60%的相似度阈值
-                highest_ratio = ratio
-                best_match = {
-                    "material": MaterialBase(**doc),
-                    "confidence": ratio / 100,
-                    "material_code": doc["material_code"]
-                }
+            cursor = self.collection.find({})
+            async for doc in cursor:
+                # 使用token_set_ratio进行更智能的匹配
+                ratio = fuzz.token_set_ratio(text.lower(), doc["material_name"].lower())
+                if ratio > highest_ratio and ratio >= 70:  # 提高相似度阈值到70%
+                    highest_ratio = ratio
+                    best_match = {
+                        "material": MaterialBase(**doc),
+                        "confidence": ratio / 100,
+                        "material_code": doc["material_code"]
+                    }
+                    logger.debug(f"更新最佳匹配: {doc['material_name']}, 相似度: {ratio}")
 
-        return best_match if highest_ratio >= 60 else None
+            return best_match if highest_ratio >= 70 else None
+        except Exception as e:
+            logger.error(f"模糊匹配出错: {str(e)}")
+            return None
 
     async def _category_match(self, text: str) -> Optional[MaterialBase]:
         """分类限定匹配"""
@@ -240,4 +247,4 @@ class MaterialMatcher:
         for pattern, replacement in patterns.items():
             spec = re.sub(pattern, replacement, spec)
 
-        return spec if spec else None         
+        return spec if spec else None           
