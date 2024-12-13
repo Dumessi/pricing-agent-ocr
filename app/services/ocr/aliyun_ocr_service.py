@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any, Union
 import base64
 import os
 import json
@@ -9,7 +9,7 @@ from alibabacloud_ocr_api20210707.client import Client
 from alibabacloud_ocr_api20210707 import models as ocr_models
 from alibabacloud_tea_openapi import models as open_api_models
 from alibabacloud_tea_util import models as util_models
-from app.models.ocr import OCRResult, TableCell, FileType
+from app.models.ocr import OCRResult, TableCell, FileType, TableRecognitionResult
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -228,128 +228,134 @@ class AliyunOCRService:
                 result += char
         return result
 
-    async def recognize_table(self, image_path: str) -> Optional[OCRResult]:
-        """识别表格内容
+    async def process_image(self, task) -> Optional[OCRResult]:
+        """处理图片文件
 
         Args:
-            image_path: 图片路径
+            task: OCR任务
 
         Returns:
-            Optional[OCRResult]: 识别结果
+            Optional[OCRResult]: OCR结果
         """
         try:
-            logger.info(f"开始处理图片: {image_path}")
+            logger.info(f"开始处理图片任务: {task.task_id}")
+            return await self.recognize_table(task.file_path)
+        except Exception as e:
+            logger.error(f"处理图片任务失败: {str(e)}")
+            return None
 
-            # 预处理图片
-            processed_image = self.preprocess_image(image_path)
-            if processed_image is None:
-                raise ValueError("图像预处理失败")
+    async def process_excel(self, task) -> Optional[OCRResult]:
+        """处理Excel文件
 
-            # 保存预处理后的图片
-            temp_path = f"{image_path}_processed.jpg"
-            cv2.imwrite(temp_path, processed_image)
+        Args:
+            task: OCR任务
 
-            try:
-                # 读取并编码预处理后的图片
-                with open(temp_path, 'rb') as f:
-                    image_data = f.read()
-                image_base64 = base64.b64encode(image_data).decode('utf-8')
-                logger.info("预处理图片编码完成")
-            finally:
-                # 确保临时文件被删除
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+        Returns:
+            Optional[OCRResult]: OCR结果
+        """
+        try:
+            import pandas as pd
+            logger.info(f"开始处理Excel任务: {task.task_id}")
 
-            # 创建请求
-            req = ocr_models.RecognizeTableOcrRequest(
-                image_url=image_base64,
-                need_sort=False,
-                skip_detection=False
-            )
-            logger.info("已创建识别请求")
+            # 读取Excel文件
+            df = pd.read_excel(task.file_path)
 
-            # 创建运行时选项
-            runtime = util_models.RuntimeOptions(
-                read_timeout=10000,
-                connect_timeout=10000,
-                retry_times=3
-            )
-            logger.info("已创建运行时选项")
-
-            # 发送请求
-            try:
-                logger.info("正在发送API请求...")
-                response = self.client.recognize_table_ocr_with_options(req, runtime)
-                logger.info("API请求成功")
-                logger.debug(f"API响应: {response.body.data}")
-            except Exception as e:
-                logger.error(f"API请求失败: {str(e)}")
-                return None
-
-            # 解析响应
-            if not response or not response.body or not response.body.data:
-                logger.error("响应数据为空")
-                return None
-
-            try:
-                result = json.loads(response.body.data)
-            except Exception as e:
-                logger.error(f"解析响应数据失败: {str(e)}")
-                return None
-
-            # 提取表格数据
-            tables = result.get("tables", [])
-            if not tables:
-                logger.warning("未检测到表格")
-                return None
-
-            # 使用第一个表格
-            table = tables[0]
+            # 转换为表格单元格
             cells = []
-
-            # 解析单元格数据
-            try:
-                for row_idx, row in enumerate(table.get("cells", [])):
-                    for col_idx, cell in enumerate(row):
-                        text = cell.get("text", "")
-                        confidence = float(cell.get("score", 0.0))
-                        row_span = cell.get("row_span", 1)
-                        col_span = cell.get("col_span", 1)
-
+            for row_idx, row in df.iterrows():
+                for col_idx, value in enumerate(row):
+                    if pd.notna(value):  # 跳过空值
                         cells.append(TableCell(
-                            text=text,
+                            text=str(value),
                             row=row_idx,
                             column=col_idx,
-                            row_span=row_span,
-                            col_span=col_span,
-                            confidence=confidence
+                            row_span=1,
+                            col_span=1,
+                            confidence=1.0  # Excel数据可信度为1
                         ))
-                logger.info(f"成功解析 {len(cells)} 个单元格")
-            except Exception as e:
-                logger.error(f"解析单元格数据失败: {str(e)}")
-                return None
 
-            # 提取表头信息
-            headers = []
-            if cells:
-                try:
-                    header_cells = [cell for cell in cells if cell.row == 0]
-                    headers = [cell.text for cell in sorted(header_cells, key=lambda x: x.column)]
-                    logger.info(f"成功提取 {len(headers)} 个表头")
-                except Exception as e:
-                    logger.error(f"提取表头信息失败: {str(e)}")
-
-            logger.info(f"成功解析表格: {len(cells)}个单元格, {len(headers)}个表头")
+            # 获取表头
+            headers = df.columns.tolist()
 
             return OCRResult(
                 cells=cells,
                 headers=headers,
-                raw_text=result.get("content", ""),
-                file_type=FileType.IMAGE
+                raw_text="",  # Excel文件不需要原始文本
+                file_type=FileType.EXCEL
             )
+        except Exception as e:
+            logger.error(f"处理Excel任务失败: {str(e)}")
+            return None
+
+    async def recognize_table(self, image_input: Union[str, bytes]) -> Optional[TableRecognitionResult]:
+        """识别表格
+
+        Args:
+            image_input: 图片路径或二进制数据
+
+        Returns:
+            Optional[TableRecognitionResult]: 表格识别结果
+        """
+        try:
+            # 处理输入
+            if isinstance(image_input, str):
+                image_data = self._read_image_file(image_input)
+                logger.info(f"从文件读取图片: {image_input}")
+            else:
+                image_data = image_input
+                logger.info("使用提供的图片二进制数据")
+
+            # Base64编码
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            logger.info("图片已转换为Base64格式")
+
+            # 创建请求
+            request = ocr_models.RecognizeTableOcrRequest(
+                image_url='',
+                image_base64=image_base64
+            )
+            runtime = util_models.RuntimeOptions()
+            logger.info("已创建OCR请求")
+
+            # 发送请求
+            logger.info("正在发送OCR请求...")
+            response = self.client.recognize_table_ocr_with_options(request, runtime)
+            logger.info("已收到OCR响应")
+            logger.debug(f"OCR响应内容: {response.body}")
+
+            # 处理响应
+            if response.body and hasattr(response.body, 'data'):
+                data = response.body.data
+                if hasattr(data, 'tables') and data.tables:
+                    tables = data.tables
+                    if not tables:
+                        logger.warning("未在图片中找到表格")
+                        return None
+
+                    # 处理第一个表格
+                    table = tables[0]
+                    result = TableRecognitionResult(
+                        cells=[
+                            TableCell(
+                                text=cell.content,
+                                row=cell.row_idx,
+                                col=cell.col_idx,
+                                row_span=cell.row_span,
+                                col_span=cell.col_span
+                            ) for cell in table.cells
+                        ],
+                        rows=table.rows,
+                        cols=table.cols
+                    )
+                    logger.info(f"成功识别表格，包含 {len(result.cells)} 个单元格")
+                    return result
+                else:
+                    logger.warning("响应中没有表格数据")
+                    return None
+            else:
+                logger.warning("无效的OCR响应")
+                return None
 
         except Exception as e:
-            logger.error(f"OCR识别失败: {str(e)}")
-            import traceback
-            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            logger.error(f"表格识别失败: {str(e)}")
             return None

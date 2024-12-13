@@ -5,10 +5,10 @@ from datetime import datetime
 class MaterialBase(BaseModel):
     material_code: str = Field(..., description="物料编码")
     material_name: str = Field(..., description="标准物料名称")
-    specification: str = Field(..., description="规格型号")
+    specification: Optional[str] = Field(None, description="规格型号")
     unit: str = Field(..., description="基本单位")
-    category: Dict[str, str] = Field(..., description="物料分类")
-    attributes: Dict[str, str] = Field(..., description="物料属性")
+    quantity: Optional[float] = Field(None, description="数量")
+    factory_price: Optional[float] = Field(None, description="厂价")
     status: bool = Field(True, description="启用状态")
 
 class MaterialCreate(MaterialBase):
@@ -35,6 +35,9 @@ class SynonymGroup(BaseModel):
     standard_name: str = Field(..., description="标准名称")
     synonyms: List[str] = Field(..., description="同义词列表")
     material_code: str = Field(..., description="关联的物料编码")
+    specification: Optional[str] = Field(None, description="规格型号")
+    unit: str = Field(..., description="基本单位")
+    factory_price: Optional[float] = Field(None, description="厂价")
     category: str = Field(..., description="同义词组类别")
     status: bool = Field(True, description="是否启用")
 
@@ -43,4 +46,7 @@ class SynonymCreate(BaseModel):
     standard_name: str = Field(..., description="标准名称")
     synonyms: List[str] = Field(..., description="同义词列表")
     material_code: str = Field(..., description="关联的物料编码")
+    specification: Optional[str] = Field(None, description="规格型号")
+    unit: str = Field(..., description="基本单位")
+    factory_price: Optional[float] = Field(None, description="厂价")
     category: str = Field(..., description="同义词组类别") 

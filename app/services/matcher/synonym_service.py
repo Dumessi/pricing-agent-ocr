@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict
 from uuid import uuid4
-from app.models.material import SynonymGroup, SynonymCreate
+from app.models.material import SynonymGroup, SynonymCreate, MaterialBase
 from app.core.database import Database, COLLECTIONS
 from app.core.monitoring import monitor_performance
 from rapidfuzz import fuzz
@@ -20,6 +20,9 @@ class SynonymService:
             standard_name=synonym_data.standard_name,
             synonyms=list(set(synonym_data.synonyms)),  # 去重
             material_code=synonym_data.material_code,
+            specification=synonym_data.specification,
+            unit=synonym_data.unit,
+            factory_price=synonym_data.factory_price,
             category=synonym_data.category,
             status=True
         )
@@ -44,18 +47,21 @@ class SynonymService:
         synonym_data_list = []
         for row in excel_data:
             try:
-                # 假设Excel数据格式为：标准名称、同义词（逗号分隔）、物料编码、类别
+                # 假设Excel数据格式为：标准名称、同义词（逗号分隔）、物料编码、规格型号、单位、厂价、类别
                 synonyms = [s.strip() for s in row["synonyms"].split(",") if s.strip()]
                 data = SynonymCreate(
                     standard_name=row["standard_name"],
                     synonyms=synonyms,
                     material_code=row["material_code"],
-                    category=row["category"]
+                    specification=row.get("specification"),
+                    unit=row["unit"],
+                    factory_price=row.get("factory_price"),
+                    category=row.get("category", "material_name")
                 )
                 synonym_data_list.append(data)
             except Exception as e:
                 print(f"Error parsing row {row}: {str(e)}")
-        
+
         return await self.batch_create_synonyms(synonym_data_list)
 
     @monitor_performance("get_synonym_group")
@@ -86,7 +92,7 @@ class SynonymService:
         """查找同义词匹配"""
         if not text.strip():  # 处理空字符串
             return None
-            
+
         # 1. 尝试精确匹配
         query = {"status": True}
         if category:
@@ -111,7 +117,7 @@ class SynonymService:
         # 2. 尝试模糊匹配
         best_match = None
         highest_ratio = 0
-        
+
         cursor = self.collection.find(query)
         async for doc in cursor:
             # 检查标准名称
@@ -137,7 +143,7 @@ class SynonymService:
         query = {"status": True}
         if category:
             query["category"] = category
-            
+
         cursor = self.collection.find(query)
         groups = []
         async for doc in cursor:
