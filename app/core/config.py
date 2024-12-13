@@ -2,12 +2,21 @@ from pydantic_settings import BaseSettings
 from typing import List
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
-# 加载环境变量
-env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', '.env')
+# 获取项目根目录
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# 加载.env文件
+env_path = os.path.join(BASE_DIR, 'config', '.env')
 load_dotenv(env_path)
 
 class Settings(BaseSettings):
+    # 阿里云OCR配置
+    ALIYUN_ACCESS_KEY_ID: str = os.getenv("ALIYUN_ACCESS_KEY_ID", "")
+    ALIYUN_ACCESS_KEY_SECRET: str = os.getenv("ALIYUN_ACCESS_KEY_SECRET", "")
+    ALIYUN_ENDPOINT: str = os.getenv("ALIYUN_ENDPOINT", "")
+
     # MongoDB配置
     MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
     MONGODB_DB: str = os.getenv("MONGODB_DB", "pricing_agent")
@@ -55,5 +64,6 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = env_path
+        extra = "allow"  # 允许额外的字段
 
 settings = Settings() 
