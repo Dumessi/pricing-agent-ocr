@@ -1,10 +1,13 @@
+import re
+import logging
 from typing import List, Optional, Dict
 from uuid import uuid4
 from app.models.material import SynonymGroup, SynonymCreate, MaterialBase
 from app.core.database import Database, COLLECTIONS
 from app.core.monitoring import monitor_performance
 from rapidfuzz import fuzz
-import re
+
+logger = logging.getLogger(__name__)
 
 class SynonymService:
     def __init__(self):
@@ -118,22 +121,26 @@ class SynonymService:
         best_match = None
         highest_ratio = 0
 
-        cursor = self.collection.find(query)
-        async for doc in cursor:
-            # 检查标准名称
-            ratio = fuzz.ratio(text.lower(), doc["standard_name"].lower())
-            if ratio > highest_ratio and ratio >= self.min_confidence * 100:
-                highest_ratio = ratio
-                best_match = doc
-                continue
-
-            # 检查同义词列表
-            for synonym in doc["synonyms"]:
-                ratio = fuzz.ratio(text.lower(), synonym.lower())
+        try:
+            cursor = self.collection.find(query)
+            async for doc in cursor:
+                # 检查标准名称
+                ratio = fuzz.ratio(text.lower(), doc["standard_name"].lower())
                 if ratio > highest_ratio and ratio >= self.min_confidence * 100:
                     highest_ratio = ratio
                     best_match = doc
-                    break
+                    continue
+
+                # 检查同义词列表
+                for synonym in doc["synonyms"]:
+                    ratio = fuzz.ratio(text.lower(), synonym.lower())
+                    if ratio > highest_ratio and ratio >= self.min_confidence * 100:
+                        highest_ratio = ratio
+                        best_match = doc
+                        break
+        except Exception as e:
+            logger.error(f"模糊匹配查询出错: {str(e)}")
+            return None
 
         return SynonymGroup(**best_match) if best_match else None
 

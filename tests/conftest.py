@@ -1,8 +1,15 @@
 import pytest
 import asyncio
+import logging
 import motor.motor_asyncio
 from app.core.config import settings
 from app.core.database import Database
+
+# Configure logging for tests
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 @pytest.fixture(scope="session", autouse=True)
 def event_loop():

@@ -1,9 +1,12 @@
+import re
+import logging
 from typing import List, Optional, Dict
 from rapidfuzz import fuzz
 from app.models.material import MaterialBase, MaterialMatch
 from app.core.database import Database, COLLECTIONS
 from app.services.matcher.synonym_service import SynonymService
-import re
+
+logger = logging.getLogger(__name__)
 
 class MaterialMatcher:
     def __init__(self):
@@ -162,8 +165,13 @@ class MaterialMatcher:
                     {"category.level2": category}
                 ]
             })
-            async for doc in cursor:
-                return MaterialBase(**doc)
+            try:
+                async for doc in cursor:
+                    material = MaterialBase(**doc)
+                    return material
+            except Exception as e:
+                logger.error(f"分类匹配查询出错: {str(e)}")
+                continue
         return None
 
     def _extract_categories(self, text: str) -> List[str]:
@@ -194,6 +202,9 @@ class MaterialMatcher:
 
     def _parse_specification(self, spec: str) -> Optional[str]:
         """解析规格型号"""
+        if not spec:
+            return None
+
         # 移除常见的无意义词
         spec = re.sub(r'型号|规格|型|号', '', spec)
 
@@ -202,17 +213,32 @@ class MaterialMatcher:
         spec = spec.upper()  # 转换为大写
 
         # 处理常见的规格表示方式
-        # 1. 尺寸类 DN100 PN16
-        spec = re.sub(r'DN(\d+)', r'DN\1', spec)
-        spec = re.sub(r'PN(\d+)', r'PN\1', spec)
+        patterns = {
+            # 1. 尺寸类
+            r'DN(\d+)': r'DN\1',  # 公称通径
+            r'PN(\d+)': r'PN\1',  # 压力等级
+            r'G(\d+)': r'G\1',    # 螺纹规格
+            r'(\d+)"': r'\1"',    # 英寸
+            r'(\d+)(MM|MM2)': r'\1\2',  # 毫米
 
-        # 2. 材质类 304 316L
-        spec = re.sub(r'(304L?|316L?|201|202|321)', r'\1', spec)
+            # 2. 材质类
+            r'(304L?|316L?|201|202|321)': r'\1',  # 不锈钢
+            r'(Q235|Q345|20#|45#)': r'\1',  # 碳钢
+            r'(HT200|QT400-18|ZG270-500)': r'\1',  # 铸铁
 
-        # 3. 连接方式
-        spec = re.sub(r'(法兰|螺纹|焊接|卡箍|快装)', r'\1', spec)
+            # 3. 连接方式
+            r'(法兰|螺纹|焊接|卡箍|快装)': r'\1',
 
-        # 4. 驱动方式
-        spec = re.sub(r'(电动|手动|气动|液动)', r'\1', spec)
+            # 4. 驱动方式
+            r'(电动|手动|气动|液动)': r'\1',
 
-        return spec if spec else None 
+            # 5. 结构特征
+            r'(单向|双向|单作用|双作用)': r'\1',
+            r'(软密封|硬密封|金属密封)': r'\1'
+        }
+
+        # 应用所有模式
+        for pattern, replacement in patterns.items():
+            spec = re.sub(pattern, replacement, spec)
+
+        return spec if spec else None     

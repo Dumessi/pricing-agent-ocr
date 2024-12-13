@@ -1,5 +1,7 @@
 import pytest
 import pandas as pd
+import re
+import logging
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.matcher.matcher import MaterialMatcher
@@ -26,9 +28,22 @@ async def material_data() -> List[dict]:
 @pytest.fixture
 async def mock_db(material_data):
     """模拟MongoDB数据库"""
+    class AsyncCursor:
+        def __init__(self, items):
+            self.items = items
+            self.index = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.index >= len(self.items):
+                raise StopAsyncIteration
+            item = self.items[self.index]
+            self.index += 1
+            return item
+
     mock_collection = AsyncMock()
-    mock_collection.find_one = AsyncMock()
-    mock_collection.find = AsyncMock()
 
     # 设置find_one的返回值
     async def mock_find_one(query):
@@ -37,28 +52,34 @@ async def mock_db(material_data):
                 query.get("material_code") == material["material_code"]):
                 return material
         return None
+    mock_collection.find_one.side_effect = mock_find_one
 
     # 设置find的返回值
-    async def mock_find(query=None):
-        class AsyncIterator:
-            def __init__(self, items):
-                self.items = items
-                self.index = 0
+    def mock_find(query=None):
+        filtered_data = []
+        if query:
+            for material in material_data:
+                # 处理正则表达式查询
+                if "$regex" in query.get("material_name", {}):
+                    pattern = query["material_name"]["$regex"]
+                    if re.search(pattern, material["material_name"], re.IGNORECASE):
+                        filtered_data.append(material)
+                # 处理分类查询
+                elif query.get("$or"):
+                    for or_condition in query["$or"]:
+                        if any(material.get("category", {}).get(k) == v
+                              for k, v in or_condition.items()):
+                            filtered_data.append(material)
+                            break
+                else:
+                    if all(material.get(k) == v for k, v in query.items()):
+                        filtered_data.append(material)
+        else:
+            filtered_data = material_data
 
-            def __aiter__(self):
-                return self
+        return AsyncCursor(filtered_data)
 
-            async def __anext__(self):
-                if self.index >= len(self.items):
-                    raise StopAsyncIteration
-                item = self.items[self.index]
-                self.index += 1
-                return item
-
-        return AsyncIterator(material_data)
-
-    mock_collection.find_one.side_effect = mock_find_one
-    mock_collection.find.side_effect = mock_find
+    mock_collection.find = MagicMock(side_effect=mock_find)
 
     with patch.object(Database, 'get_db') as mock_get_db:
         mock_db = MagicMock()
