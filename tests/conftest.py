@@ -23,14 +23,15 @@ def event_loop():
 @pytest.fixture(scope="session")
 async def database():
     """创建数据库连接"""
+    client = None
     try:
         client = motor.motor_asyncio.AsyncIOMotorClient(settings.MONGODB_URL)
         db = client[settings.MONGODB_DB]
         Database._db = db
         yield db
-        await client.close()
-    except Exception as e:
-        pytest.fail(f"数据库连接失败: {str(e)}")
+    finally:
+        if client:
+            await client.close()
 
 @pytest.fixture(autouse=True)
 async def clean_collections(database):

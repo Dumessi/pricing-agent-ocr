@@ -1,16 +1,16 @@
-from typing import List, Dict, Optional, Tuple, Any, Union
 import base64
-import os
-import json
 import logging
-import numpy as np
-import cv2
-from alibabacloud_ocr_api20210707.client import Client
-from alibabacloud_ocr_api20210707 import models as ocr_models
+from typing import Optional, Union, List, Dict, Any
+
+from alibabacloud_ocr20191230 import models as ocr_models
 from alibabacloud_tea_openapi import models as open_api_models
+from alibabacloud_ocr20191230.client import Client
 from alibabacloud_tea_util import models as util_models
-from app.models.ocr import OCRResult, TableCell, FileType, TableRecognitionResult
+
 from app.core.config import settings
+from app.models.ocr import TableRecognitionResult, TableCell, OCRResult, FileType
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,8 @@ class AliyunOCRService:
             config = open_api_models.Config(
                 access_key_id=settings.ALIYUN_ACCESS_KEY_ID,
                 access_key_secret=settings.ALIYUN_ACCESS_KEY_SECRET,
-                endpoint="ocr-api.cn-shanghai.aliyuncs.com"
+                endpoint="ocr.cn-hangzhou.aliyuncs.com",  # 使用标准区域端点
+                region_id="cn-hangzhou"  # 设置区域ID
             )
             logger.info("已创建SDK配置")
 
@@ -58,93 +59,55 @@ class AliyunOCRService:
             logger.error(f"读取图片文件失败: {str(e)}")
             raise
 
-    def preprocess_image(self, image_path: str) -> Optional[np.ndarray]:
-        """图像预处理
+    def preprocess_image(self, image_data: bytes) -> bytes:
+        """预处理图片
 
         Args:
-            image_path: 图片路径
+            image_data: 原始图片数据
 
         Returns:
-            Optional[np.ndarray]: 预处理后的图像数组，失败则返回None
+            bytes: 处理后的图片数据
         """
         try:
-            # 读取图片
-            image = cv2.imread(image_path)
-            if image is None:
-                raise ValueError("Failed to load image")
+            import io
+            from PIL import Image
 
-            # 调整图像大小
-            height, width = image.shape[:2]
-            if width > 2000:
-                scale = 2000 / width
-                new_width = 2000
-                new_height = int(height * scale)
-                image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+            # 将二进制数据转换为PIL Image对象
+            image = Image.open(io.BytesIO(image_data))
 
-            # 转换为灰度图
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            # 转换为RGB模式（如果是RGBA，去除alpha通道）
+            if image.mode in ('RGBA', 'LA'):
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.split()[-1])
+                image = background
+            elif image.mode != 'RGB':
+                image = image.convert('RGB')
 
-            # 去噪处理
-            denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+            # 调整图片大小（如果太大）
+            max_size = 4096  # 阿里云OCR API的最大支持尺寸
+            if max(image.size) > max_size:
+                ratio = max_size / max(image.size)
+                new_size = tuple(int(dim * ratio) for dim in image.size)
+                image = image.resize(new_size, Image.Resampling.LANCZOS)
 
-            # 自适应直方图均衡化
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            equalized = clahe.apply(denoised)
+            # 确保图片质量（DPI）
+            dpi = image.info.get('dpi', (300, 300))
+            if isinstance(dpi, tuple) and (dpi[0] < 300 or dpi[1] < 300):
+                # 如果DPI太低，进行重采样
+                new_size = tuple(int(dim * 300 / min(dpi)) for dim in image.size)
+                image = image.resize(new_size, Image.Resampling.LANCZOS)
 
-            # 对比度增强
-            alpha = 1.3  # 对比度增强因子
-            beta = 15    # 亮度增强因子
-            enhanced = cv2.convertScaleAbs(equalized, alpha=alpha, beta=beta)
+            # 保存为JPEG格式（阿里云OCR推荐格式）
+            output = io.BytesIO()
+            image.save(output, format='JPEG', quality=95, dpi=(300, 300))
+            processed_data = output.getvalue()
 
-            # 自适应二值化
-            binary = cv2.adaptiveThreshold(
-                enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY, 11, 2
-            )
-
-            # 形态学操作
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-            morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-            morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel)
-
-            # 倾斜校正
-            coords = np.column_stack(np.where(morph > 0))
-            if len(coords) > 100:  # 确保有足够的点进行校正
-                angle = cv2.minAreaRect(coords)[-1]
-                if angle < -45:
-                    angle = 90 + angle
-
-                # 如果倾斜角度大于0.5度才进行校正
-                if abs(angle) > 0.5:
-                    (h, w) = morph.shape[:2]
-                    center = (w // 2, h // 2)
-                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-                    rotated = cv2.warpAffine(
-                        morph, M, (w, h),
-                        flags=cv2.INTER_CUBIC,
-                        borderMode=cv2.BORDER_REPLICATE
-                    )
-                else:
-                    rotated = morph
-            else:
-                rotated = morph
-
-            # 边缘增强
-            kernel_sharpen = np.array([
-                [-1,-1,-1],
-                [-1, 9,-1],
-                [-1,-1,-1]
-            ])
-            sharpened = cv2.filter2D(rotated, -1, kernel_sharpen)
-
-            # 最终的降噪处理
-            final = cv2.medianBlur(sharpened, 3)
-
-            return final
+            logger.info("图片预处理完成")
+            return processed_data
 
         except Exception as e:
-            logger.error(f"图像预处理失败: {str(e)}")
-            return None
+            logger.error(f"图片预处理失败: {str(e)}")
+            raise
 
 
 
@@ -287,75 +250,99 @@ class AliyunOCRService:
             logger.error(f"处理Excel任务失败: {str(e)}")
             return None
 
-    async def recognize_table(self, image_input: Union[str, bytes]) -> Optional[TableRecognitionResult]:
-        """识别表格
+    async def recognize_table(self, image_path: str) -> Optional[OCRResult]:
+        """识别表格内容
 
         Args:
-            image_input: 图片路径或二进制数据
+            image_path: 图片路径
 
         Returns:
-            Optional[TableRecognitionResult]: 表格识别结果
+            OCRResult: OCR识别结果
         """
         try:
-            # 处理输入
-            if isinstance(image_input, str):
-                image_data = self._read_image_file(image_input)
-                logger.info(f"从文件读取图片: {image_input}")
-            else:
-                image_data = image_input
-                logger.info("使用提供的图片二进制数据")
+            # 读取并预处理图片
+            logger.info(f"从文件读取图片: {image_path}")
+            image_bytes = self._read_image_file(image_path)
+            if not image_bytes:
+                logger.error("读取图片失败")
+                return None
 
-            # Base64编码
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            # 预处理图片
+            processed_image = self.preprocess_image(image_bytes)
+            logger.info("图片预处理完成")
+
+            # 转换为Base64
+            image_base64 = base64.b64encode(processed_image).decode('utf-8')
             logger.info("图片已转换为Base64格式")
+            logger.debug(f"Base64长度: {len(image_base64)}")
 
-            # 创建请求
-            request = ocr_models.RecognizeTableOcrRequest(
-                image_url='',
-                image_base64=image_base64
+            # 创建请求对象
+            request = ocr_models.RecognizeTableRequest(
+                image_url=image_base64,  # 使用正确的参数名
+                output_format="json",
+                assure_direction=True,
+                has_line=True,
+                skip_detection=False,
+                use_finance_model=False
             )
-            runtime = util_models.RuntimeOptions()
             logger.info("已创建OCR请求")
+            logger.debug(f"请求参数: {request.to_map()}")
+
+            # 创建运行时选项
+            runtime = util_models.RuntimeOptions()
 
             # 发送请求
             logger.info("正在发送OCR请求...")
-            response = self.client.recognize_table_ocr_with_options(request, runtime)
-            logger.info("已收到OCR响应")
-            logger.debug(f"OCR响应内容: {response.body}")
+            response = await self.client.recognize_table_with_options_async(request, runtime)
 
-            # 处理响应
-            if response.body and hasattr(response.body, 'data'):
-                data = response.body.data
-                if hasattr(data, 'tables') and data.tables:
-                    tables = data.tables
-                    if not tables:
-                        logger.warning("未在图片中找到表格")
-                        return None
-
-                    # 处理第一个表格
-                    table = tables[0]
-                    result = TableRecognitionResult(
-                        cells=[
-                            TableCell(
-                                text=cell.content,
-                                row=cell.row_idx,
-                                col=cell.col_idx,
-                                row_span=cell.row_span,
-                                col_span=cell.col_span
-                            ) for cell in table.cells
-                        ],
-                        rows=table.rows,
-                        cols=table.cols
-                    )
-                    logger.info(f"成功识别表格，包含 {len(result.cells)} 个单元格")
-                    return result
-                else:
-                    logger.warning("响应中没有表格数据")
-                    return None
-            else:
-                logger.warning("无效的OCR响应")
+            if not response or not response.body:
+                logger.error("OCR响应为空")
                 return None
 
+            logger.info("OCR请求成功")
+            logger.debug(f"OCR响应: {response.body}")
+
+            # 解析响应
+            data = response.body
+            if not isinstance(data, dict):
+                logger.error(f"OCR响应格式错误: {type(data)}")
+                return None
+
+            # 提取表格数据
+            tables_result = data.get('Data', {}).get('TableArray', [])
+            if not tables_result:
+                logger.warning("未检测到表格")
+                return None
+
+            # 处理识别结果
+            result = OCRResult(
+                raw_text="",  # 原始文本将从表格内容中提取
+                tables=[],    # 表格数据将在下面处理
+                confidence=float(data.get('Data', {}).get('Confidence', 0))
+            )
+
+            # 处理每个表格
+            for table in tables_result:
+                table_data = []
+                for row in table.get('TableRows', []):
+                    row_data = []
+                    for cell in row.get('TableCells', []):
+                        cell_text = cell.get('Text', '').strip()
+                        row_data.append(cell_text)
+                    if row_data:
+                        table_data.append(row_data)
+                if table_data:
+                    result.tables.append(table_data)
+
+            # 如果没有提取到任何表格数据，返回None
+            if not result.tables:
+                logger.warning("未能提取到有效的表格数据")
+                return None
+
+            return result
+
         except Exception as e:
-            logger.error(f"表格识别失败: {str(e)}")
+            logger.error(f"OCR请求失败: {str(e)}")
+            logger.error(f"错误代码: {getattr(e, 'code', 'Unknown')}")
+            logger.error(f"错误信息: {getattr(e, 'message', str(e))}")
             return None

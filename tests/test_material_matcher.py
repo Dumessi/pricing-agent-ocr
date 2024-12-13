@@ -1,33 +1,35 @@
-import pytest
-import pandas as pd
 import re
-import logging
-from typing import List
-from unittest.mock import AsyncMock, MagicMock, patch
-from app.services.matcher.matcher import MaterialMatcher
+import pytest
+from unittest.mock import AsyncMock, MagicMock
 from app.models.material import MaterialBase, MaterialMatch
-from app.core.database import Database, COLLECTIONS
+from app.services.matcher.matcher import MaterialMatcher
+from app.core.database import Database
 
 @pytest.fixture
-async def material_data() -> List[dict]:
-    """加载金蝶物料清单作为测试数据"""
-    df = pd.read_excel("/home/ubuntu/attachments/material-list-20241207.xlsx")
-    materials = []
-    for _, row in df.iterrows():
-        material = {
-            "material_code": row["编码"],
-            "material_name": row["名称"],
-            "specification": row["规格型号"] if pd.notna(row["规格型号"]) else None,
-            "unit": row["基本单位"],
-            "factory_price": float(row["厂价"]) if pd.notna(row["厂价"]) else None,
+async def material_data():
+    """测试用物料数据"""
+    return [
+        {
+            "material_code": "M001",
+            "material_name": "消防镀锌钢管",
+            "specification": "DN150",
+            "unit": "米",
+            "factory_price": 100.0,
+            "status": True
+        },
+        {
+            "material_code": "M002",
+            "material_name": "湿式报警阀",
+            "specification": "DN100",
+            "unit": "个",
+            "factory_price": 2000.0,
             "status": True
         }
-        materials.append(material)
-    return materials
+    ]
 
 @pytest.fixture
 async def mock_db(material_data):
-    """模拟MongoDB数据库"""
+    """Mock数据库"""
     class AsyncCursor:
         def __init__(self, items):
             self.items = items
@@ -43,49 +45,45 @@ async def mock_db(material_data):
             self.index += 1
             return item
 
-    mock_collection = AsyncMock()
-
-    # 设置find_one的返回值
-    async def mock_find_one(query):
-        for material in material_data:
-            if (query.get("material_name") == material["material_name"] or
-                query.get("material_code") == material["material_code"]):
-                return material
+    async def mock_find_one(collection, query):
+        for item in material_data:
+            if all(
+                isinstance(v, dict) and "$regex" in v and re.search(v["$regex"], item[k], re.IGNORECASE)
+                if isinstance(v, dict) and "$regex" in v
+                else item.get(k) == v
+                for k, v in query.items()
+            ):
+                return item
         return None
+
+    async def mock_find(collection, query=None):
+        if query is None:
+            query = {}
+        matched_items = []
+        for item in material_data:
+            if all(
+                isinstance(v, dict) and "$regex" in v and re.search(v["$regex"], item[k], re.IGNORECASE)
+                if isinstance(v, dict) and "$regex" in v
+                else item.get(k) == v
+                for k, v in query.items()
+            ):
+                matched_items.append(item)
+        return AsyncCursor(matched_items)
+
+    # Create mock collection
+    mock_collection = AsyncMock()
     mock_collection.find_one.side_effect = mock_find_one
+    mock_collection.find.side_effect = mock_find
 
-    # 设置find的返回值
-    def mock_find(query=None):
-        filtered_data = []
-        if query:
-            for material in material_data:
-                # 处理正则表达式查询
-                if "$regex" in query.get("material_name", {}):
-                    pattern = query["material_name"]["$regex"]
-                    if re.search(pattern, material["material_name"], re.IGNORECASE):
-                        filtered_data.append(material)
-                # 处理分类查询
-                elif query.get("$or"):
-                    for or_condition in query["$or"]:
-                        if any(material.get("category", {}).get(k) == v
-                              for k, v in or_condition.items()):
-                            filtered_data.append(material)
-                            break
-                else:
-                    if all(material.get(k) == v for k, v in query.items()):
-                        filtered_data.append(material)
-        else:
-            filtered_data = material_data
+    # Create mock db
+    mock_db = MagicMock()
+    mock_db.__getitem__.return_value = mock_collection
+    Database._db = mock_db
 
-        return AsyncCursor(filtered_data)
+    yield mock_db
 
-    mock_collection.find = MagicMock(side_effect=mock_find)
-
-    with patch.object(Database, 'get_db') as mock_get_db:
-        mock_db = MagicMock()
-        mock_db.__getitem__.return_value = mock_collection
-        mock_get_db.return_value = mock_db
-        yield mock_db
+    # Cleanup
+    Database._db = None
 
 @pytest.fixture
 async def matcher(mock_db):

@@ -16,17 +16,10 @@ class MaterialMatcher:
         self.synonym_service = SynonymService()
 
     async def match_material(self, text: str, spec: Optional[str] = None) -> MaterialMatch:
-        """
-        匹配物料信息
+        """匹配物料信息"""
+        logger.info(f"开始匹配物料: {text}")
 
-        参数:
-            text: 物料名称文本
-            spec: 规格型号（可选）
-
-        返回:
-            MaterialMatch对象
-        """
-        # 1. 尝试完全匹配
+        # 1. 精确匹配
         exact_match = await self._exact_match(text)
         if exact_match:
             return MaterialMatch(
@@ -37,18 +30,7 @@ class MaterialMatcher:
                 material_info=exact_match
             )
 
-        # 2. 尝试分类限定匹配
-        category_match = await self._category_match(text)
-        if category_match:
-            return MaterialMatch(
-                original_text=text,
-                matched_code=category_match.material_code,
-                confidence=0.8,
-                match_type="category",
-                material_info=category_match
-            )
-
-        # 3. 尝试同义词匹配
+        # 2. 同义词匹配
         synonym_match = await self._synonym_match(text)
         if synonym_match:
             return MaterialMatch(
@@ -59,17 +41,28 @@ class MaterialMatcher:
                 material_info=synonym_match
             )
 
-        # 4. 如果有规格信息，尝试规格解析匹配
+        # 3. 规格匹配
         if spec:
             spec_match = await self._spec_match(text, spec)
             if spec_match:
                 return MaterialMatch(
                     original_text=text,
                     matched_code=spec_match.material_code,
-                    confidence=0.7,
+                    confidence=0.8,
                     match_type="specification",
                     material_info=spec_match
                 )
+
+        # 4. 分类匹配
+        category_match = await self._category_match(text)
+        if category_match:
+            return MaterialMatch(
+                original_text=text,
+                matched_code=category_match.material_code,
+                confidence=0.7,
+                match_type="category",
+                material_info=category_match
+            )
 
         # 5. 模糊匹配
         fuzzy_match = await self._fuzzy_match(text)
@@ -82,7 +75,7 @@ class MaterialMatcher:
                 material_info=fuzzy_match["material"]
             )
 
-        # 6. 没有找到匹配
+        # 无匹配结果
         return MaterialMatch(
             original_text=text,
             matched_code="",
@@ -92,43 +85,48 @@ class MaterialMatcher:
         )
 
     async def _exact_match(self, text: str) -> Optional[MaterialBase]:
-        """完全匹配"""
-        doc = await self.collection.find_one({"material_name": text})
-        if doc:
-            return MaterialBase(**doc)
+        """精确匹配"""
+        try:
+            doc = await self.collection.find_one({"material_name": text})
+            if doc:
+                return MaterialBase(**doc)
+        except Exception as e:
+            logger.error(f"精确匹配出错: {str(e)}")
         return None
 
     async def _synonym_match(self, text: str) -> Optional[MaterialBase]:
         """同义词匹配"""
-        # 使用同义词服务进行匹配
-        synonym_group = await self.synonym_service.find_synonym(text, category="material_name")
-        if synonym_group:
-            # 获取关联的物料信息
-            doc = await self.collection.find_one({"material_code": synonym_group.material_code})
-            if doc:
-                return MaterialBase(**doc)
+        try:
+            synonym_group = await self.synonym_service.find_synonym(text, category="material_name")
+            if synonym_group:
+                doc = await self.collection.find_one({"material_code": synonym_group.material_code})
+                if doc:
+                    return MaterialBase(**doc)
+        except Exception as e:
+            logger.error(f"同义词匹配出错: {str(e)}")
         return None
 
     async def _spec_match(self, text: str, spec: str) -> Optional[MaterialBase]:
         """规格匹配"""
-        # 1. 尝试精确规格匹配
-        cursor = self.collection.find({
-            "material_name": {"$regex": text, "$options": "i"},
-            "specification": spec
-        })
-        async for doc in cursor:
-            return MaterialBase(**doc)
-
-        # 2. 尝试规格解析匹配
-        parsed_spec = self._parse_specification(spec)
-        if parsed_spec:
-            cursor = self.collection.find({
-                "material_name": {"$regex": text, "$options": "i"},
-                "specification": {"$regex": parsed_spec, "$options": "i"}
-            })
-            async for doc in cursor:
+        try:
+            # 1. 精确规格匹配
+            query = {
+                "material_name": {"$regex": f"^{re.escape(text)}", "$options": "i"},
+                "specification": spec
+            }
+            doc = await self.collection.find_one(query)
+            if doc:
                 return MaterialBase(**doc)
 
+            # 2. 规格解析匹配
+            parsed_spec = self._parse_specification(spec)
+            if parsed_spec:
+                query["specification"] = {"$regex": parsed_spec, "$options": "i"}
+                doc = await self.collection.find_one(query)
+                if doc:
+                    return MaterialBase(**doc)
+        except Exception as e:
+            logger.error(f"规格匹配出错: {str(e)}")
         return None
 
     async def _fuzzy_match(self, text: str) -> Optional[Dict]:
@@ -241,4 +239,4 @@ class MaterialMatcher:
         for pattern, replacement in patterns.items():
             spec = re.sub(pattern, replacement, spec)
 
-        return spec if spec else None     
+        return spec if spec else None       

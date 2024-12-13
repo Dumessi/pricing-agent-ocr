@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pydantic import BaseModel
 
 class FileType(str, Enum):
@@ -46,7 +46,7 @@ class TableRecognitionResult(BaseModel):
         column_cells.sort(key=lambda x: x.row)
         return [cell.text for cell in column_cells]
 
-    def get_rows(self) -> List[dict]:
+    def get_rows(self) -> List[Dict[str, str]]:
         """获取所有行数据"""
         if not self.cells:
             return []

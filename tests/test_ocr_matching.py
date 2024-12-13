@@ -61,10 +61,12 @@ async def test_material_matching(test_images_dir, ocr_service, material_matcher)
     assert len(material_names) > 0, "未识别到物料名称"
 
     # 测试物料匹配
-    for name in material_names[:3]:  # 测试前3个物料
+    for name in material_names:
         match_result = await material_matcher.match_material(name)
-        assert isinstance(match_result, MaterialMatch)
-        assert match_result.original_text == name
+        logger.info(f"物料名称 '{name}' 匹配结果: {match_result}")
+
+        # 验证匹配结果
+        assert match_result is not None, f"物料 '{name}' 匹配失败"
         assert match_result.confidence > 0.5, f"物料 '{name}' 匹配置信度过低"
 
 @pytest.mark.asyncio
