@@ -19,14 +19,14 @@ class ExcelParser:
         # 匹配DN+数字的模式
         dn_pattern = r'DN\d+(?:\*\d+)?'
         dn_match = re.search(dn_pattern, name)
-        
+
         # 如果在括号中有规格信息
         bracket_pattern = r'\((.*?)\)'
         bracket_match = re.search(bracket_pattern, name)
-        
+
         spec = ""
         clean_name = name
-        
+
         if dn_match:
             spec = dn_match.group()
             clean_name = name.replace(spec, '').strip()
@@ -35,7 +35,7 @@ class ExcelParser:
             if any(char.isdigit() for char in bracket_content):  # 如果括号内容包含数字，可能是规格
                 spec = bracket_content
                 clean_name = name.replace(f"({spec})", '').strip()
-        
+
         return clean_name, spec
 
     @staticmethod
@@ -47,13 +47,13 @@ class ExcelParser:
             '名称': 'material_name',
             '规格型号': 'specification',
             '基本单位': 'unit',
-            '厂价': 'attr_price'
+            '厂价': 'factory_price'
         }
-        
+
         # 重命名存在的列
         existing_columns = {old: new for old, new in column_mapping.items() if old in df.columns}
         df = df.rename(columns=existing_columns)
-        
+
         # 处理规格型号为空的情况，从名称中提取
         if 'specification' in df.columns:
             df['specification'] = df['specification'].fillna('')
@@ -61,12 +61,12 @@ class ExcelParser:
             extracted = df.loc[mask, 'material_name'].apply(ExcelParser.extract_specification_from_name)
             df.loc[mask, 'material_name'] = extracted.apply(lambda x: x[0])
             df.loc[mask, 'specification'] = extracted.apply(lambda x: x[1])
-        
+
         # 处理物料名称
         df['material_name'] = df['material_name'].str.strip()
-        
+
         # 添加智能分类
-        def get_category(name: str) -> tuple:
+        def get_category(name: str) -> dict:
             # 常见物料类别映射
             categories = {
                 '阀': ('管道系统', '阀门类'),
@@ -86,29 +86,32 @@ class ExcelParser:
                 '消防': ('消防系统', '消防设备'),
                 '灭火': ('消防系统', '灭火设备')
             }
-            
+
             for key, value in categories.items():
                 if key in name:
-                    return value
-            return ('其他设备', '其他')
+                    return {
+                        'type': value[0],
+                        'group': value[1]
+                    }
+            return {
+                'type': '其他设备',
+                'group': '其他'
+            }
 
-        # 添加分类列
-        df['category_temp'] = df['material_name'].apply(get_category)
-        df['category_level1'] = df['category_temp'].apply(lambda x: x[0])
-        df['category_level2'] = df['category_temp'].apply(lambda x: x[1])
-        df = df.drop('category_temp', axis=1)
-        
+        # 添加分类
+        df['category'] = df['material_name'].apply(get_category)
+
         # 处理价格列
-        if 'attr_price' in df.columns:
-            df['attr_price'] = df['attr_price'].fillna(0).astype(float)
-        
+        if 'factory_price' in df.columns:
+            df['factory_price'] = pd.to_numeric(df['factory_price'], errors='coerce').fillna(0)
+
         # 确保所有必要的列都存在
-        required_columns = ['material_code', 'material_name', 'specification', 'unit', 
-                          'category_level1', 'category_level2']
+        required_columns = ['material_code', 'material_name', 'specification', 'unit',
+                          'factory_price', 'category']
         for col in required_columns:
             if col not in df.columns:
-                df[col] = ''
-        
+                df[col] = '' if col != 'category' else {}
+
         return df
 
     def parse_excel(self, file_path: str) -> pd.DataFrame:

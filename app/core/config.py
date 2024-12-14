@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # 阿里云OCR配置
     ALIYUN_ACCESS_KEY_ID: str = os.getenv("ALIYUN_ACCESS_KEY_ID", "")
     ALIYUN_ACCESS_KEY_SECRET: str = os.getenv("ALIYUN_ACCESS_KEY_SECRET", "")
-    ALIYUN_ENDPOINT: str = os.getenv("ALIYUN_ENDPOINT", "")
+    ALIYUN_ENDPOINT: str = os.getenv("ALIYUN_ENDPOINT", "ocr-api.cn-shanghai.aliyuncs.com")
 
     # MongoDB配置
     MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017")

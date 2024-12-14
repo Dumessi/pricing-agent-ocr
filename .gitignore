@@ -37,8 +37,9 @@ uploads/
 *.log
 .DS_Store
 
-# MongoDB
+# MongoDB and data
 data/
+!tests/data/
 mongodb.conf
 
 # OCR models
