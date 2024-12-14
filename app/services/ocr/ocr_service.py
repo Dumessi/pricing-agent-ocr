@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Tuple
 from app.models.ocr import OCRTask, TaskStatus, TableStructure, TableCell, FileType
-from app.core.database import Database, COLLECTIONS
+from app.core.database import get_database, COLLECTIONS
 from app.utils.excel_parser import ExcelParser
 from app.core.config import settings
 import uuid
@@ -12,8 +12,8 @@ import cv2
 import os
 
 class OCRService:
-    def __init__(self):
-        self.db = Database.get_db()
+    async def __init__(self):
+        self.db = await get_database()
         self.collection = self.db[COLLECTIONS["ocr_tasks"]]
         self.excel_parser = ExcelParser()
         # 初始化OCR引擎

@@ -6,7 +6,7 @@ import pytest
 from app.services.ocr.aliyun_ocr_service import AliyunOCRService
 from app.services.matcher.matcher import MaterialMatcher
 from app.models.ocr import FileType, OCRTask, TaskStatus
-from app.core.database import Database, COLLECTIONS
+from app.core.database import get_database, COLLECTIONS
 from app.core.config import settings
 
 @pytest.fixture(autouse=True)

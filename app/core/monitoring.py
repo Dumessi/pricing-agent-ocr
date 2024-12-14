@@ -3,17 +3,28 @@ from functools import wraps
 from typing import Dict, List, Optional
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
-from app.core.database import Database, COLLECTIONS
+from app.core.database import get_database, COLLECTIONS
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PerformanceMetrics:
     def __init__(self):
-        self.db = Database.get_db()
-        self.collection = self.db[COLLECTIONS.get("metrics", "performance_metrics")]
+        self.db = None
+        self.collection = None
 
-    async def record_metric(self, 
-                          operation: str, 
-                          duration: float, 
-                          success: bool, 
+    @classmethod
+    async def create(cls) -> 'PerformanceMetrics':
+        """Factory method to create a new PerformanceMetrics instance"""
+        metrics = cls()
+        metrics.db = await get_database()
+        metrics.collection = metrics.db[COLLECTIONS.get("metrics", "performance_metrics")]
+        return metrics
+
+    async def record_metric(self,
+                          operation: str,
+                          duration: float,
+                          success: bool,
                           details: Optional[Dict] = None):
         """记录性能指标"""
         metric = {
@@ -25,8 +36,8 @@ class PerformanceMetrics:
         }
         await self.collection.insert_one(metric)
 
-    async def get_metrics(self, 
-                         operation: Optional[str] = None, 
+    async def get_metrics(self,
+                         operation: Optional[str] = None,
                          start_time: Optional[datetime] = None,
                          end_time: Optional[datetime] = None) -> List[Dict]:
         """获取性能指标"""
@@ -72,16 +83,15 @@ class PerformanceMetrics:
             return 0
         return result[0]["success_count"] / result[0]["total"]
 
-# 性能监控装饰器
 def monitor_performance(operation: str):
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            metrics = PerformanceMetrics()
+            metrics = await PerformanceMetrics.create()  # Properly await the async initialization
             start_time = time.time()
             success = True
             details = {}
-            
+
             try:
                 result = await func(*args, **kwargs)
                 return result
